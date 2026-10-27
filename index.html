@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SF Housing Search</title>
+<!-- Leaflet + OpenStreetMap: free, no API key, no account. Loaded from unpkg;
+     if it's ever unreachable the map button just reports it and the list is
+     unaffected, since nothing else on the page depends on this. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --card: #fff;
+    --text: #2a2a2a;
+    --muted: #7a7a7a;
+    --accent: #5a4fcf;
+    --ideal: #2e7d32;
+    --stretch: #f57c00;
+    --flex: #c62828;
+    /* Map pin yellow. Separate from --stretch (orange), which the card badges
+       and laundry tags use — changing that would recolor unrelated things. */
+    --warn: #f2c200;
+    --border: #e5e2d8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 1.25rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: #fff;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  h1 { margin: 0; font-size: 1.35rem; }
+  .meta { color: var(--muted); font-size: 0.85rem; }
+  .layout { display: flex; align-items: flex-start; }
+  aside {
+    width: 280px;
+    padding: 1.5rem;
+    border-right: 1px solid var(--border);
+    background: #fff;
+    height: calc(100vh - 70px);
+    position: sticky;
+    top: 0;
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  main { flex: 1; padding: 1.5rem 2rem; min-width: 0; }
+  .filter-group { margin-bottom: 1.5rem; }
+  .filter-group h3 {
+    margin: 0 0 0.5rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .chip {
+    padding: 0.35rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: #fff;
+    font-size: 0.8rem;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.1s;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .chip.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  select {
+    width: 100%;
+    padding: 0.45rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    background: #fff;
+  }
+  .listings {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    transition: box-shadow 0.15s;
+  }
+  .card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+  .card .title {
+    font-weight: 600;
+    font-size: 0.95rem;
+    line-height: 1.35;
+  }
+  .card .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 0.85rem;
+    color: var(--muted);
+    gap: 0.5rem;
+  }
+  .card .price {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .card .per-person {
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+  .tier-badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .tier-badge.ideal { background: #e6f4ea; color: var(--ideal); }
+  .tier-badge.stretch { background: #fff4e5; color: var(--stretch); }
+  /* Was grey — now red, to agree with the map pins. */
+  .tier-badge.over { background: #fbe9e7; color: var(--flex); }
+  .tier-note {
+    margin: .45rem 0 0; font-size: .72rem; color: var(--muted); line-height: 1.3;
+  }
+  /* --- map --- */
+  .map-panel { margin-bottom: 1.25rem; }
+  .map-head {
+    display: flex; align-items: center; gap: .75rem; margin-bottom: .5rem;
+  }
+  .map-toggle {
+    font: inherit; font-size: .82rem; padding: .35rem .8rem; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    border-radius: 999px;
+  }
+  .map-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  .map-note { font-size: .75rem; color: var(--muted); }
+  #map {
+    height: 420px; width: 100%; border-radius: 10px; display: none;
+    border: 1px solid var(--border); background: #eee; z-index: 0;
+  }
+  #map.on { display: block; }
+  /* Price pill markers — colored by budget tier, same palette as the cards. */
+  .pin {
+    background: var(--ideal); color: #fff; font-weight: 600; font-size: .72rem;
+    padding: .18rem .4rem; border-radius: 999px; white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0,0,0,.35); border: 1.5px solid #fff; text-align: center;
+  }
+  /* Traffic-light scale: green ideal, yellow stretch, red over budget.
+     The yellow takes dark text — white on yellow is unreadable at this size. */
+  .pin.stretch { background: var(--warn); color: #2a2a2a; }
+  .pin.over    { background: var(--flex); }
+  .pin.fav     { border-color: #f4b400; }
+  /* Marks cards the map can't plot — Craigslist and most PM sites give an
+     address but no coordinates. Muted and italic so it reads as a footnote. */
+  .no-geo {
+    font-size: .72rem; font-style: italic; color: var(--muted);
+    margin-top: .15rem;
+  }
+  .map-legend {
+    display: none; gap: 1rem; flex-wrap: wrap; align-items: center;
+    margin-top: .5rem; font-size: .75rem; color: var(--muted);
+  }
+  .map-legend.on { display: flex; }
+  .map-legend span { display: inline-flex; align-items: center; gap: .35rem; }
+  .map-legend .dot {
+    width: .7rem; height: .7rem; border-radius: 50%; display: inline-block;
+  }
+  .map-legend .dot.ideal   { background: var(--ideal); }
+  .map-legend .dot.stretch { background: var(--warn); }
+  .map-legend .dot.over    { background: var(--flex); }
+  .map-legend .legend-note { font-style: italic; opacity: .85; }
+  .leaflet-popup-content { margin: .6rem .8rem; font-size: .82rem; line-height: 1.45; }
+  .leaflet-popup-content a { color: var(--accent); font-weight: 600; }
+  .over-badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: #fdecea;
+    color: #c0392b;
+  }
+  .card.over-budget { border-left: 3px solid #e74c3c; }
+  /* Bonus-room note. Blue, not amber — it's an opportunity to check, not a
+     warning about the listing. */
+  .bonus {
+    background: #e8f0fe; color: #1a4fa0;
+    padding: .35rem .55rem; border-radius: 4px;
+    font-size: .75rem; margin-top: .35rem; line-height: 1.35;
+  }
+  /* Rent came down since we first saw it. Green and leading, because this is
+     the strongest buy signal on the card. */
+  .drop {
+    background: #e6f4ea; color: #1b5e20;
+    padding: .35rem .55rem; border-radius: 4px;
+    font-size: .75rem; font-weight: 600; margin-top: .35rem; line-height: 1.35;
+  }
+  /* Sat on the market a while — not a problem with the unit, an opening to
+     negotiate. Amber rather than red for that reason. */
+  .stale {
+    background: #fff4e5; color: #9a5b00;
+    padding: .35rem .55rem; border-radius: 4px;
+    font-size: .75rem; margin-top: .35rem; line-height: 1.35;
+  }
+  /* More than two people per bathroom. Quiet — it is a fact to weigh, not a
+     warning, and plenty of good places are 3BR/1BA. */
+  .bath-warn { font-size: .75rem; color: var(--flex); }
+  .warn {
+    background: #fff8e1;
+    color: #f57c00;
+    padding: 0.35rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+  }
+  .source-badge {
+    color: white;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+  }
+  .feature-tag {
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    background: #f2efe8;
+  }
+  .feature-tag.in_unit { background: #e6f4ea; color: var(--ideal); }
+  .feature-tag.on_site { background: #e3f2fd; color: #1565c0; }
+  .feature-tag.hookups { background: #fff4e5; color: var(--stretch); }
+  .feature-tag.none    { background: #fbe9e7; color: var(--flex); }
+  .card.viewed {
+    opacity: 0.55;
+    background: #f5f3ec;
+  }
+  .card.viewed .title { color: var(--muted); }
+  .card.favorite {
+    border-color: #f4b400;
+    border-width: 2px;
+    padding: calc(1rem - 1px);
+  }
+  .fav-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2rem;
+    line-height: 1;
+    padding: 0 0.25rem;
+    color: #ccc;
+    transition: color 0.15s, transform 0.1s;
+  }
+  .fav-btn:hover { transform: scale(1.15); }
+  .fav-btn.on { color: #f4b400; }
+  .viewed-badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: #d0d0d0;
+    color: #555;
+  }
+  .reset-viewed {
+    font-size: 0.75rem;
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    margin-top: 0.35rem;
+  }
+  .reset-viewed:hover { text-decoration: underline; }
+  .card a.view {
+    display: inline-block;
+    background: var(--accent);
+    color: white;
+    text-decoration: none;
+    padding: 0.45rem 0.7rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    text-align: center;
+    margin-top: 0.35rem;
+    font-weight: 500;
+  }
+  .card a.view:hover { background: #4a3fb8; }
+  .empty {
+    text-align: center;
+    padding: 3rem;
+    color: var(--muted);
+    grid-column: 1 / -1;
+  }
+  /* --- phone ---------------------------------------------------------
+     The sidebar was a fixed 280px column pinned to calc(100vh - 70px),
+     which on a phone ate most of the screen before a single listing was
+     visible. Stack it above the results and let it scroll with the page;
+     the filters collapse behind a summary so the list starts at the top. */
+  @media (max-width: 720px) {
+    header { padding: 1rem; }
+    .layout { flex-direction: column; }
+    aside {
+      width: 100%; height: auto; position: static;
+      border-right: none; border-bottom: 1px solid var(--border);
+      padding: 0 1rem 1rem;
+    }
+    main { padding: 1rem; }
+    .listings { grid-template-columns: 1fr; }
+    #map { height: 300px; }
+    aside > .filter-group { margin-bottom: 1rem; }
+    /* Bigger tap targets than the 0.35rem desktop chips. */
+    .chip { padding: .45rem .8rem; }
+    #filters-summary {
+      display: block; list-style: none; cursor: pointer;
+      padding: .85rem 0 .35rem; font-size: .85rem; font-weight: 600;
+      color: var(--accent);
+    }
+    #filters-summary::-webkit-details-marker { display: none; }
+    #filters-summary::after { content: " ▾"; }
+    details[open] #filters-summary::after { content: " ▴"; }
+  }
+  /* On a wide screen the filters are always open and the toggle is hidden. */
+  @media (min-width: 721px) {
+    #filters-summary { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>SF Housing Search</h1>
+    <div class="meta" id="meta"></div>
+  </div>
+  <div class="meta" id="count"></div>
+</header>
+<div class="layout">
+  <aside>
+    <details id="filters" open>
+    <summary id="filters-summary">Filters</summary>
+    <div class="filter-group">
+      <h3>Favorites</h3>
+      <div class="chips" id="favorites-chips">
+        <div class="chip" data-val="only">Show only favorites</div>
+      </div>
+    </div>
+    <div class="filter-group">
+      <h3>Budget Tier (per person)</h3>
+      <div class="chips" id="tier-chips">
+        <div class="chip active" data-val="ideal">Ideal ≤ $2,600</div>
+        <div class="chip active" data-val="stretch">Stretch ≤ $2,800</div>
+        <div class="chip" data-val="over">Over budget</div>
+      </div>
+      <p class="tier-note">Per person, one person per bedroom. Nothing above
+        $3,000 /person is collected at all; "over budget" is the $2,800–3,000
+        band, kept because a unit that has sat a while is worth an ask.</p>
+    </div>
+    <div class="filter-group">
+      <h3>Bedrooms</h3>
+      <div class="chips" id="rm-chips">
+        <div class="chip active" data-val="2">2BR · 1 roommate</div>
+        <div class="chip active" data-val="3">3BR · 2 roommates</div>
+        <div class="chip active" data-val="4">4BR · 3 roommates</div>
+      </div>
+    </div>
+    <div class="filter-group">
+      <h3>Bathrooms</h3>
+      <div class="chips" id="bath-chips">
+        <div class="chip active" data-val="2">2+</div>
+        <div class="chip active" data-val="1.5">1.5</div>
+        <div class="chip active" data-val="1">1</div>
+        <div class="chip active" data-val="unknown">Not listed</div>
+      </div>
+    </div>
+    <div class="filter-group">
+      <h3>Neighborhood</h3>
+      <div class="chips" id="hood-chips"></div>
+    </div>
+    <div class="filter-group">
+      <h3>Posted Within</h3>
+      <select id="age-filter">
+        <option value="1">Last 24 hours</option>
+        <option value="3">Last 3 days</option>
+        <option value="7" selected>Last week</option>
+        <option value="9999">Any</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <h3>Source</h3>
+      <div class="chips" id="source-chips"></div>
+    </div>
+    <div class="filter-group">
+      <h3>Laundry</h3>
+      <div class="chips" id="laundry-chips">
+        <div class="chip active" data-val="in_unit">In-unit</div>
+        <div class="chip active" data-val="on_site">On-site</div>
+        <div class="chip active" data-val="hookups">Hookups</div>
+        <div class="chip active" data-val="unknown">Unknown (verify)</div>
+      </div>
+    </div>
+    <div class="filter-group">
+      <h3>Viewed</h3>
+      <div class="chips" id="viewed-chips">
+        <div class="chip" data-val="hide">Hide already-viewed</div>
+      </div>
+      <button class="reset-viewed" id="reset-viewed">Reset viewed history</button>
+    </div>
+    <div class="filter-group">
+      <h3>Busy Streets</h3>
+      <div class="chips" id="busy-chips">
+        <div class="chip active" data-val="hide">Hide flagged</div>
+      </div>
+    </div>
+    </details>
+    <div class="filter-group">
+      <h3>Sort By</h3>
+      <select id="sort-select">
+        <option value="per-person">Per-person price (low → high)</option>
+        <option value="price">Total price (low → high)</option>
+        <option value="date">Newest first</option>
+        <option value="drop">Biggest rent cut</option>
+        <option value="stale">Longest on the market</option>
+      </select>
+    </div>
+  </aside>
+  <main>
+    <div class="map-panel" id="map-panel">
+      <div class="map-head">
+        <button id="map-toggle" class="map-toggle">Show map</button>
+        <span class="map-note" id="map-note"></span>
+      </div>
+      <div id="map"></div>
+      <div class="map-legend" id="map-legend">
+        <span><i class="dot ideal"></i>Ideal</span>
+        <span><i class="dot stretch"></i>Stretch</span>
+        <span><i class="dot over"></i>Over budget</span>
+        <span class="legend-note">colour = cost per person; label = total rent</span>
+      </div>
+    </div>
+    <div class="listings" id="listings"></div>
+  </main>
+</div>
+<script>
+// Dynamic loader with cache-buster — prevents browser from serving stale listings.js
+window.LISTING_DATA = null;
+window.__LOAD_ERROR = null;
+function loadListings() {
+  return new Promise((resolve) => {
+    const s = document.createElement("script");
+    s.src = "listings.js?v=" + Date.now();
+    s.onload = () => resolve();
+    s.onerror = () => {
+      window.__LOAD_ERROR = "Could not load listings.js. Run: python3 scrape.py";
+      resolve();
+    };
+    document.head.appendChild(s);
+  });
+}
+</script>
+<script>
+// Must match NEIGHBORHOOD_ORDER in scrape.py — a name only listed here gets a
+// filter chip that nothing can ever match.
+const HOODS = [
+  "Duboce Triangle", "NOPA", "Hayes Valley", "Haight-Ashbury", "Cole Valley",
+  "Castro / Upper Market", "Dolores", "Mission", "Noe Valley",
+  "Western Addition", "Anza Vista", "Lower Pac Heights",
+];
+
+const state = {
+  tiers: new Set(["ideal", "stretch"]),
+  rooms: new Set(["2", "3", "4"]),   // by bedroom count, not roommate count
+  hoods: new Set(HOODS),
+  sources: new Set(),
+  laundry: new Set(["in_unit", "on_site", "hookups", "unknown"]),
+  baths: new Set(["1", "1.5", "2", "unknown"]),   // bucket keys, see bathKey()
+  age: 7,
+  hideBusy: true,
+  hideViewed: false,
+  favoritesOnly: false,
+  sort: "per-person",
+};
+
+const VIEWED_KEY = "sf-housing-viewed-urls";
+const FAVORITES_KEY = "sf-housing-favorite-urls";
+function loadSet(key) {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(key) || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+function saveSet(key, set) {
+  try {
+    localStorage.setItem(key, JSON.stringify([...set]));
+  } catch (e) {
+    console.error("localStorage save failed:", e);
+  }
+}
+let viewedUrls = loadSet(VIEWED_KEY);
+let favoriteUrls = loadSet(FAVORITES_KEY);
+function markViewed(url) {
+  if (viewedUrls.has(url)) return;
+  viewedUrls.add(url);
+  saveSet(VIEWED_KEY, viewedUrls);
+}
+function toggleFavorite(url) {
+  if (favoriteUrls.has(url)) favoriteUrls.delete(url);
+  else favoriteUrls.add(url);
+  saveSet(FAVORITES_KEY, favoriteUrls);
+}
+function pruneFavorites(currentUrls) {
+  // Remove favorites whose listing is no longer in the scraped data
+  let changed = false;
+  for (const u of favoriteUrls) {
+    if (!currentUrls.has(u)) {
+      favoriteUrls.delete(u);
+      changed = true;
+    }
+  }
+  if (changed) saveSet(FAVORITES_KEY, favoriteUrls);
+}
+
+const SOURCE_COLOR = {
+  "Craigslist": "#7c4dff",
+  "Zillow": "#0074e4",
+  "Reddit": "#ff4500",
+};
+
+function initHoodChips() {
+  const el = document.getElementById("hood-chips");
+  el.innerHTML = "";
+  HOODS.forEach(v => {
+    const chip = document.createElement("div");
+    chip.className = "chip active";
+    chip.dataset.val = v;
+    chip.textContent = v;
+    chip.onclick = () => {
+      chip.classList.toggle("active");
+      if (chip.classList.contains("active")) state.hoods.add(v);
+      else state.hoods.delete(v);
+      render();
+    };
+    el.appendChild(chip);
+  });
+}
+
+function initSourceChips() {
+  const el = document.getElementById("source-chips");
+  const sources = new Set((window.LISTING_DATA?.listings || []).map(l => l.source));
+  state.sources = new Set(sources);
+  el.innerHTML = "";
+  [...sources].sort().forEach(v => {
+    const chip = document.createElement("div");
+    chip.className = "chip active";
+    chip.dataset.val = v;
+    chip.textContent = v;
+    chip.onclick = () => {
+      chip.classList.toggle("active");
+      if (chip.classList.contains("active")) state.sources.add(v);
+      else state.sources.delete(v);
+      render();
+    };
+    el.appendChild(chip);
+  });
+}
+
+function bindStaticChips(container, stateKey) {
+  const el = document.getElementById(container);
+  el.querySelectorAll(".chip").forEach(chip => {
+    chip.onclick = () => {
+      chip.classList.toggle("active");
+      const v = chip.dataset.val;
+      const set = state[stateKey];
+      if (chip.classList.contains("active")) set.add(v);
+      else set.delete(v);
+      render();
+    };
+  });
+}
+
+// Per-person budget — one person per bedroom, flat across household sizes.
+// Was per-size (2200/2400 for a 2BR, 2500/2700 for a 3BR) and had drifted well
+// out of sync with scrape.py, which was separately using 2500/2750 and
+// 2600/2850 and so was scraping a band the dashboard then mislabelled.
+// Keep in sync with IDEAL_PER_PERSON / STRETCH_PER_PERSON in scrape.py.
+const IDEAL_PER_PERSON = 2600;
+const STRETCH_PER_PERSON = 2800;
+// Hard ceiling, matching SCRAPE_CAP_PER_PERSON. Nothing above this is scraped,
+// so "over budget" only ever means the band between stretch and this.
+const CAP_PER_PERSON = 3000;
+
+// Beds the unit can actually sleep — one more than listed when a bonus room
+// (office/den) was detected. Everything user-facing keys off this, so a
+// promoted 1BR+office is priced and grouped as a 2BR.
+function effBeds(l) { return l.effective_beds || l.beds; }
+
+// One person per bedroom. scrape.py now ships `per_person` directly; the
+// fallback keeps a browser holding a cached older listings.js working.
+function perPerson(l) {
+  return l.per_person != null ? l.per_person : l.price / effBeds(l);
+}
+
+function tierForPerPerson(pp) {
+  if (pp <= IDEAL_PER_PERSON) return "ideal";
+  if (pp <= STRETCH_PER_PERSON) return "stretch";
+  return "over";
+}
+
+// Bathrooms bucketed for filtering: 1, 1.5, 2+ or unknown. Half-baths matter
+// here — a 2BA and a 1.5BA are not the same thing to share with roommates.
+function bathKey(l) {
+  if (l.baths == null) return "unknown";
+  if (l.baths >= 2) return "2";
+  if (l.baths >= 1.5) return "1.5";
+  return "1";
+}
+
+function bathLabel(l) {
+  if (l.baths == null) return "? BA";
+  // 2.0 -> "2 BA", 1.5 -> "1.5 BA"
+  return `${Number(l.baths).toFixed(1).replace(/\.0$/, "")} BA`;
+}
+
+function roommateLabel(beds) {
+  const n = beds - 1;
+  return n === 1 ? "1 roommate" : `${n} roommates`;
+}
+
+function ageDays(posted) {
+  if (!posted) return null;
+  const d = new Date(posted);
+  if (isNaN(d)) return null;
+  return (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24);
+}
+
+function formatAge(iso) {
+  const days = ageDays(iso);
+  if (days === null) return "date unknown";
+  if (days < 1) return "today";
+  if (days < 2) return "yesterday";
+  return `${Math.floor(days)} days ago`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function render() {
+  const listings = (window.LISTING_DATA?.listings || []).slice();
+  const filtered = listings.filter(l => {
+    // Favorites-only bypasses most other filters — user wants to see their saved list
+    if (state.favoritesOnly) return favoriteUrls.has(l.url);
+    if (!state.tiers.has(tierForPerPerson(perPerson(l)))) return false;
+    if (!state.rooms.has(String(effBeds(l)))) return false;
+    if (!state.hoods.has(l.neighborhood)) return false;
+    if (!state.sources.has(l.source)) return false;
+    const laundryKey = l.laundry || "unknown";
+    if (!state.laundry.has(laundryKey)) return false;
+    if (!state.baths.has(bathKey(l))) return false;
+    if (state.hideBusy && l.busy_street) return false;
+    if (state.hideViewed && viewedUrls.has(l.url)) return false;
+    const age = ageDays(l.posted);
+    if (age !== null && age > state.age) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (state.sort === "price") return a.price - b.price;
+    if (state.sort === "date") return new Date(b.posted || 0) - new Date(a.posted || 0);
+    // Biggest price cut first, then longest on market — the negotiation list.
+    if (state.sort === "drop") {
+      const d = (b.price_drop || 0) - (a.price_drop || 0);
+      return d !== 0 ? d : (b.days_on_market || 0) - (a.days_on_market || 0);
+    }
+    if (state.sort === "stale") return (b.days_on_market || 0) - (a.days_on_market || 0);
+    return perPerson(a) - perPerson(b);
+  });
+
+  const container = document.getElementById("listings");
+  container.innerHTML = "";
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty">No listings match. Loosen a filter.</div>';
+  }
+  filtered.forEach(l => {
+    const pp = perPerson(l);
+    const tier = tierForPerPerson(pp);
+    const rmLabel = roommateLabel(effBeds(l));
+    const card = document.createElement("div");
+    card.className = "card";
+    const srcColor = SOURCE_COLOR[l.source] || "#666";
+    const bathStr = bathLabel(l);
+    // Bedrooms the listing advertises vs. what it can sleep once a bonus room
+    // is counted. Showing both avoids a card that reads "3BR" next to a title
+    // that plainly says 2BR.
+    const bedStr = l.effective_beds > l.beds
+      ? `${l.beds}BR+1 → ${l.effective_beds}BR`
+      : `${l.beds}BR`;
+    const perBath = l.baths ? effBeds(l) / l.baths : null;
+    const laundryLabels = {
+      in_unit: "Laundry in-unit",
+      on_site: "Laundry on-site",
+      hookups: "W/D hookups",
+      none: "No laundry",
+    };
+    const laundryStr = l.laundry ? laundryLabels[l.laundry] : "Laundry unknown";
+    // Unknown bath count matters more the bigger the place: four people
+    // sharing one unconfirmed bathroom is the thing to check before touring.
+    const verifyBaths = l.baths == null && effBeds(l) >= 3;
+    const isViewed = viewedUrls.has(l.url);
+    const isFavorite = favoriteUrls.has(l.url);
+    if (isViewed) card.classList.add("viewed");
+    if (isFavorite) card.classList.add("favorite");
+    if (l.over_budget) card.classList.add("over-budget");
+    card.innerHTML = `
+      <div class="row">
+        <span class="source-badge" style="background:${srcColor}">${escapeHtml(l.source || "?")}</span>
+        <span>${escapeHtml(l.neighborhood)}</span>
+        <button class="fav-btn ${isFavorite ? 'on' : ''}" title="${isFavorite ? 'Remove from favorites' : 'Save to favorites'}">${isFavorite ? '★' : '☆'}</button>
+      </div>
+      ${isViewed ? '<div><span class="viewed-badge">Viewed</span></div>' : ''}
+      <div class="title">${escapeHtml(l.title)}</div>
+      <div class="row">
+        <span>${bedStr} / ${bathStr} · ${rmLabel}</span>
+        <span>Posted ${formatAge(l.posted)}</span>
+      </div>
+      <div class="row">
+        <span class="price">$${l.price.toLocaleString()}/mo</span>
+        <span>
+          ${l.over_budget ? `<span class="over-badge" title="Above $${STRETCH_PER_PERSON.toLocaleString()}/person">Over budget</span> ` : ''}
+          <span class="tier-badge ${tier}">${tier}</span>
+        </span>
+      </div>
+      <div class="per-person">Your share: ~$${Math.round(pp).toLocaleString()}/mo</div>
+      ${perBath && perBath > 2 ? `<div class="bath-warn">${effBeds(l)} people sharing ${bathStr.replace(" BA", "")} bath${l.baths > 1 ? "s" : ""}</div>` : ""}
+      ${l.price_drop > 0 ? `<div class="drop">Rent cut $${l.price_drop.toLocaleString()} since it was listed (was $${l.first_price.toLocaleString()})</div>` : ""}
+      ${l.stale ? `<div class="stale">On the market ${l.days_on_market} days — worth asking about rent</div>` : ""}
+      ${l.lat && l.lng ? "" : '<div class="no-geo">Not on the map — this source doesn\'t publish coordinates</div>'}
+      <div class="row"><span class="feature-tag ${l.laundry || 'unknown'}">${escapeHtml(laundryStr)}</span></div>
+      ${l.bonus_room ? `<div class="bonus">${l.effective_beds > l.beds
+          ? `Listed ${l.beds}BR + office/den — counted as ${l.effective_beds}BR. Verify the extra room works as a bedroom.`
+          : `Mentions an office/den — may sleep one more than ${l.beds}`}</div>` : ""}
+      ${verifyBaths ? `<div class="warn">Bathroom count not listed — confirm before touring</div>` : ""}
+      ${l.busy_street ? `<div class="warn">Busy street flag: ${escapeHtml(l.busy_street)}</div>` : ""}
+      <a class="view" href="${escapeHtml(l.url)}" target="_blank" rel="noopener">View on ${escapeHtml(l.source || "site")} →</a>
+    `;
+    // Favorite toggle
+    const favBtn = card.querySelector(".fav-btn");
+    if (favBtn) {
+      favBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleFavorite(l.url);
+        render();
+      });
+    }
+    // Viewed tracking — mark on any activation of the View link, including
+    // cmd/ctrl-click and middle-click. Fire synchronously, no setTimeout.
+    const viewLink = card.querySelector("a.view");
+    if (viewLink) {
+      const markAndRender = () => {
+        markViewed(l.url);
+        render();
+      };
+      viewLink.addEventListener("click", markAndRender);
+      viewLink.addEventListener("auxclick", markAndRender); // middle-click
+      viewLink.addEventListener("contextmenu", markAndRender); // right-click (open in new tab menu)
+    }
+    container.appendChild(card);
+  });
+
+  document.getElementById("count").textContent =
+    `Showing ${filtered.length} of ${listings.length}`;
+
+  renderMap(filtered);
+}
+
+// ---------------------------------------------------------------
+// Map (Leaflet + Esri light-gray basemap — no API key, no account)
+//
+// Was OpenStreetMap's own tile.openstreetmap.org until 2026-10-26, when it
+// started serving a "403 Access blocked — app is not following the tile usage
+// policy" placeholder image instead of map tiles. Those servers are run by
+// volunteers for OSM's own use and their policy rules out app-like traffic;
+// this page was re-fetching tiles on every filter click, which is exactly the
+// pattern they block. Note it returns HTTP 200 with the refusal drawn into the
+// PNG, so Leaflet has no error to report and the map just looks broken.
+//
+// Esri's World Light Gray Canvas is free, keyless and explicitly public, and a
+// desaturated basemap is the right call anyway — the price pins are the data,
+// the streets are reference. CARTO's keyless basemaps were the other candidate
+// and now also require an API key, so they are not an option.
+// ---------------------------------------------------------------
+let map = null, markerLayer = null;
+// Signature of what is currently plotted, so the view is only re-fit when the
+// listing set actually changes. fitBounds on every render re-requested tiles on
+// every chip click and fought the user whenever they panned.
+let lastPlotSig = null;
+
+function renderMap(filtered) {
+  // Only Zillow and ReLISTO publish coordinates; the rest give addresses only.
+  // Say so plainly rather than quietly showing a map that's missing listings.
+  const plottable = filtered.filter(l => l.lat && l.lng);
+  const missing = filtered.length - plottable.length;
+  const note = document.getElementById("map-note");
+  note.textContent = missing
+    ? `${plottable.length} of ${filtered.length} on the map — ${missing} have no coordinates`
+    : `all ${plottable.length} on the map`;
+
+  if (!map) return;  // map not opened yet; it'll draw on first open
+
+  markerLayer.clearLayers();
+  if (!plottable.length) return;
+
+  plottable.forEach(l => {
+    const pp = perPerson(l);
+    const tier = tierForPerPerson(pp);
+    const fav = favoriteUrls.has(l.url) ? " fav" : "";
+    const marker = L.marker([l.lat, l.lng], {
+      icon: L.divIcon({
+        className: "",
+        html: `<div class="pin ${tier}${fav}">$${(l.price / 1000).toFixed(1)}k</div>`,
+        iconSize: [46, 20],
+        iconAnchor: [23, 10],
+      }),
+    });
+    marker.bindPopup(
+      `<b>$${l.price.toLocaleString()}</b> · ${effBeds(l)}BR / ${bathLabel(l)}<br>` +
+      `$${Math.round(pp).toLocaleString()}/person · ${roommateLabel(effBeds(l))}<br>` +
+      `${escapeHtml(l.neighborhood)} · <span style="color:#7a7a7a">${escapeHtml(l.source)}</span><br>` +
+      (l.price_drop > 0
+        ? `<span style="color:#2e7d32;font-weight:600">↓ $${l.price_drop.toLocaleString()} since listed</span><br>` : "") +
+      (l.stale ? `<span style="color:#f57c00">${l.days_on_market} days on market</span><br>` : "") +
+      `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">View listing →</a>`
+    );
+    markerLayer.addLayer(marker);
+  });
+
+  // Only re-frame when the plotted set changed. Re-fitting on every render
+  // yanked the view back each time a chip was toggled and re-requested a fresh
+  // screenful of tiles for no reason.
+  const sig = plottable.map(l => l.url).sort().join("|");
+  if (sig !== lastPlotSig) {
+    lastPlotSig = sig;
+    map.fitBounds(L.latLngBounds(plottable.map(l => [l.lat, l.lng])).pad(0.15));
+  }
+}
+
+function initMap() {
+  if (map) return true;
+  if (typeof L === "undefined") {           // CDN blocked or offline
+    document.getElementById("map-note").textContent =
+      "Map library didn't load — check the connection. The list below still works.";
+    return false;
+  }
+  map = L.map("map", { scrollWheelZoom: false }).setView([37.773, -122.435], 13);
+  const esri = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas";
+  // Esri splits this basemap in two: the base carries streets and buildings,
+  // the reference layer carries place and neighborhood names on transparent
+  // tiles above the markers' basemap. Both are needed for a legible map.
+  const base = L.tileLayer(`${esri}/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
+    maxZoom: 19,
+    attribution: 'Tiles &copy; Esri — Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+  }).addTo(map);
+  L.tileLayer(`${esri}/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, {
+    maxZoom: 19,
+  }).addTo(map);
+  // If the basemap ever goes the way of the OSM one, say so instead of leaving
+  // a grey box. One message per session, not one per failed tile.
+  let tileErrorShown = false;
+  base.on("tileerror", () => {
+    if (tileErrorShown) return;
+    tileErrorShown = true;
+    document.getElementById("map-note").textContent =
+      "Basemap tiles failed to load — pins and the list below still work.";
+  });
+  markerLayer = L.layerGroup().addTo(map);
+  return true;
+}
+
+document.getElementById("map-toggle").onclick = () => {
+  const el = document.getElementById("map");
+  const showing = el.classList.toggle("on");
+  document.getElementById("map-legend").classList.toggle("on", showing);
+  document.getElementById("map-toggle").textContent = showing ? "Hide map" : "Show map";
+  if (showing && initMap()) {
+    // Leaflet measures the container on creation; it was display:none until now,
+    // so force a re-measure or the tiles render into a zero-height box.
+    setTimeout(() => { map.invalidateSize(); render(); }, 0);
+  }
+};
+
+// Collapse the filter panel on a phone so the listings start at the top of the
+// page. Left open on a wide screen, where the sidebar costs nothing. Only on
+// first load — reopening it is then the user's call and survives re-renders.
+if (window.matchMedia("(max-width: 720px)").matches) {
+  document.getElementById("filters").open = false;
+}
+
+initHoodChips();
+bindStaticChips("tier-chips", "tiers");
+bindStaticChips("rm-chips", "rooms");
+bindStaticChips("laundry-chips", "laundry");
+bindStaticChips("bath-chips", "baths");
+// initSourceChips is called after data loads
+document.getElementById("age-filter").onchange = e => {
+  state.age = parseFloat(e.target.value);
+  render();
+};
+document.getElementById("busy-chips").querySelector(".chip").onclick = e => {
+  const c = e.currentTarget;
+  c.classList.toggle("active");
+  state.hideBusy = c.classList.contains("active");
+  render();
+};
+document.getElementById("viewed-chips").querySelector(".chip").onclick = e => {
+  const c = e.currentTarget;
+  c.classList.toggle("active");
+  state.hideViewed = c.classList.contains("active");
+  render();
+};
+document.getElementById("favorites-chips").querySelector(".chip").onclick = e => {
+  const c = e.currentTarget;
+  c.classList.toggle("active");
+  state.favoritesOnly = c.classList.contains("active");
+  render();
+};
+document.getElementById("reset-viewed").onclick = () => {
+  if (confirm("Reset all viewed history? This can't be undone.")) {
+    viewedUrls = new Set();
+    saveSet(VIEWED_KEY, viewedUrls);
+    render();
+  }
+};
+document.getElementById("sort-select").onchange = e => {
+  state.sort = e.target.value;
+  render();
+};
+
+// Initial data load + first render
+loadListings().then(() => {
+  const metaEl = document.getElementById("meta");
+  if (window.LISTING_DATA) {
+    const d = new Date(window.LISTING_DATA.generated_at);
+    metaEl.textContent = "Data updated " + d.toLocaleString();
+    // Prune orphaned favorites whose listings are no longer scraped
+    pruneFavorites(new Set(window.LISTING_DATA.listings.map(l => l.url)));
+  } else if (window.__LOAD_ERROR) {
+    metaEl.textContent = window.__LOAD_ERROR;
+  } else {
+    metaEl.textContent = "No listings yet — run: python3 scrape.py";
+  }
+  initSourceChips();
+  render();
+});
+
+// Auto-reload data every 10 minutes without full page refresh
+setInterval(() => {
+  loadListings().then(() => {
+    if (window.LISTING_DATA) {
+      document.getElementById("meta").textContent =
+        "Data updated " + new Date(window.LISTING_DATA.generated_at).toLocaleString();
+      pruneFavorites(new Set(window.LISTING_DATA.listings.map(l => l.url)));
+    }
+    initSourceChips();
+    render();
+  });
+}, 10 * 60 * 1000);
+</script>
+</body>
+</html>
